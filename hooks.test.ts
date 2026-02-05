@@ -1,4 +1,60 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+let hookStates: unknown[] = [];
+let hookIndex = 0;
+let triggerRender: (() => void) | null = null;
+
+const initializeHooks = () => {
+  hookStates = [];
+  hookIndex = 0;
+};
+
+const resetHookIndex = () => {
+  hookIndex = 0;
+};
+
+vi.mock('react', () => ({
+  useState: (initialValue: unknown) => {
+    const stateIndex = hookIndex++;
+    if (hookStates[stateIndex] === undefined) {
+      hookStates[stateIndex] = typeof initialValue === 'function'
+        ? (initialValue as () => unknown)()
+        : initialValue;
+    }
+    const setState = (value: unknown) => {
+      hookStates[stateIndex] = typeof value === 'function'
+        ? (value as (prev: unknown) => unknown)(hookStates[stateIndex])
+        : value;
+      if (triggerRender) {
+        triggerRender();
+      }
+    };
+    return [hookStates[stateIndex], setState];
+  },
+  useCallback: (callback: unknown) => callback,
+  useEffect: () => {},
+  useMemo: (factory: () => unknown) => {
+    const memoIndex = hookIndex++;
+    if (hookStates[memoIndex] === undefined) {
+      hookStates[memoIndex] = factory();
+    }
+    return hookStates[memoIndex];
+  },
+  useRef: (initialValue: unknown) => {
+    const refIndex = hookIndex++;
+    if (hookStates[refIndex] === undefined) {
+      hookStates[refIndex] = { current: initialValue };
+    }
+    return hookStates[refIndex];
+  },
+}));
+
+vi.mock('react-native', () => ({
+  Platform: {
+    OS: 'web',
+    select: (options: Record<string, unknown>) => options.web ?? options.default,
+  },
+}));
 import { useAppState } from './hooks/useAppState';
 import { useEventLogging } from './hooks/useEventLogging';
 import { useInspection } from './hooks/useInspection';
@@ -11,8 +67,14 @@ import { useOfflineSync } from './hooks/useOfflineSync';
 // Mock renderHook and act for testing
 // These are simplified mocks for testing hooks in isolation
 const renderHook = (hook: any) => {
-  let result: any;
-  result = hook();
+  initializeHooks();
+  const result = { current: null as unknown };
+  const render = () => {
+    resetHookIndex();
+    result.current = hook();
+  };
+  triggerRender = render;
+  render();
   return { result };
 };
 
